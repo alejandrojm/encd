@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Diagrama de Hertzsprung-Russell 3D Conexiones y Texto</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            overflow: hidden; /* Evita barras de desplazamiento */
+            background-color: #1a1a2e; /* Fondo oscuro para el modo oscuro */
+            color: #e0e0e0; /* Color de texto claro */
+            height: 100vh; /* Ocupa toda la altura de la ventana */
+            position: relative; /* Necesario para posicionar elementos absolutos dentro */
+        }
+        #threejs-container {
+            position: absolute; /* Ocupa todo el espacio */
+            top: 0;
+            left: 0;
+            width: 100%; /* Ocupa todo el ancho de la pantalla */
+            height: 100%; /* Ocupa toda la altura de la pantalla */
+            overflow: hidden;
+            z-index: 1; /* Capa inferior para el canvas */
+        }
+        canvas {
+            display: block; /* Elimina el espacio extra debajo del canvas */
+            width: 100%; /* Ocupa todo el ancho del contenedor */
+            height: 100%; /* Ocupa toda la altura del contenedor */
+        }
+        #image-container {
+            position: absolute; /* Posiciona la imagen sobre el canvas */
+            right: 0; /* Alineado a la derecha */
+            top: 50%; /* Centrado verticalmente */
+            transform: translateY(-50%); /* Ajuste para centrado vertical perfecto */
+            width: 500px; /* Fixed width to prevent scaling with browser zoom */
+            max-width: 90%; /* Ensures it's still responsive on very small screens */
+            background-color: transparent; /* Fondo transparente para que se vea el canvas detrás */
+            z-index: 1; /* Capa superior para la imagen */
+            padding: 20px; /* Adjusted padding for better fit with fixed width */
+            box-sizing: border-box; /* Incluir padding en el tamaño total */
+            text-align: center; /* Para centrar el contenido */
+        }
+        #image-placeholder {
+            width: 80%; /* Ocupa 80% del ancho de su contenedor (which is now fixed) */
+            height: 300px; /* Altura fija */
+            margin: 0 auto; /* Center the placeholder within its container */
+            border-radius: 10px;
+            color: #e0e0e0;
+            font-size: 1.2em;
+            text-align: center;
+            overflow: hidden; /* Oculta el contenido que se desborda si la imagen es más grande */
+            line-height: 300px; /* Centra el texto verticalmente si no hay imagen */
+        }
+        #image-placeholder img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain; /* Ensures the image fits within the placeholder without cropping */
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div id="threejs-container"></div>
+    <div id="image-container">
+        <div id="image-placeholder">
+            <img src="encd25.png"
+                 alt="Imagen de prueba">
+        </div>
+    </div>
+
+    <script>
+        // --- Three.js Configuration ---
+        let scene, camera, renderer, controls;
+        const numStars = 600; // Reduced number of random data points to 600
+
+        // Conceptual dimensions for the 3D space and scales
+        const maxSphereRadius = 800; // Maximum radius for the spherical distribution
+
+        // Logarithmic range for data generation (used for color and text, not direct position)
+        const minTempLog = Math.log10(2000); // Minimum temperature in Kelvin
+        const maxTempLog = Math.log10(50000); // Maximum temperature in Kelvin
+        const minLumLog = Math.log10(0.0001); // Minimum luminosity in L☉
+        const maxLumLog = Math.log10(1000000); // Maximum luminosity in L☉
+
+        // Continuous color scale for temperature (e.g., from blue to red)
+        const colorScale = d3.scaleSequential(d3.interpolatePlasma)
+            .domain([minTempLog, maxTempLog]); // The domain is the logarithm of the temperature
+
+        // Global array to store star text sprites for easy access and updates
+        let starTextSprites = [];
+
+        // Helper function to create a text sprite for Three.js
+        function makeTextSprite(message, parameters) {
+            if (parameters === undefined) parameters = {};
+            const fontface = parameters.hasOwnProperty("fontface") ? parameters["fontface"] : "Arial";
+            // Font size 20% larger than original 15px, so 18px
+            const fontsize = parameters.hasOwnProperty("fontsize") ? parameters["fontsize"] : 18;
+            const textColor = parameters.hasOwnProperty("textColor") ? parameters["textColor"] : { r: 255, g: 255, b: 255, a: 0.6 };
+
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            context.font = "Bold " + fontsize + "px " + fontface;
+
+            // Calculate max width for "999" to ensure consistent canvas size for 3-digit numbers
+            const tempMetrics = context.measureText("999"); // Changed to "999" for new range
+            const maxTextWidth = tempMetrics.width;
+            const textHeight = fontsize * 1.2; // Approximate height with some padding
+
+            // Set canvas dimensions to be fixed based on max expected text width
+            canvas.width = maxTextWidth + 4; // Add a little padding
+            canvas.height = textHeight + 4;
+
+            // Redraw context with new dimensions
+            context.font = "Bold " + fontsize + "px " + fontface; // Re-set font after canvas resize
+            context.fillStyle = "rgba(" + textColor.r + ", " + textColor.g + ", " + textColor.b + ", " + textColor.a + ")";
+            context.fillText(message, 2, fontsize + 2); // Draw text with padding
+
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.needsUpdate = true;
+
+            const spriteMaterial = new THREE.SpriteMaterial({ map: texture, transparent: true, opacity: textColor.a });
+            const sprite = new THREE.Sprite(spriteMaterial);
+
+            // Scale the sprite based on the canvas dimensions to make it visually small and proportional
+            const scaleFactor = 0.25;
+            sprite.scale.set(canvas.width * scaleFactor, canvas.height * scaleFactor, 1);
+
+            return sprite;
+        }
+
+        // Function to initialize the 3D scene
+        function init() {
+            // Scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x1a1a2e); // Dark background
+
+            // Camera
+            // Camera aspect ratio now uses full window dimensions
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
+            // Adjusted camera position for initial 300% zoom (closer to the center)
+            camera.position.z = maxSphereRadius * (2.5 / 3); // Approximately 666.67 units
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            // Renderer size now uses full window dimensions
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.getElementById('threejs-container').appendChild(renderer.domElement);
+
+            // Orbit controls for mouse interaction
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true; // Smooths movement
+            controls.dampingFactor = 0.05;
+            controls.screenSpacePanning = false;
+            controls.minDistance = 100; // Minimum distance the camera can get to the target
+            controls.maxDistance = maxSphereRadius * 3; // Max distance adjusted for larger sphere
+
+            // Enable auto-rotation
+            controls.autoRotate = true;
+            controls.autoRotateSpeed = 0.5; // Adjust speed as needed (e.g., 0.1 for very slow)
+
+            // Event listeners to pause/resume auto-rotation on user interaction
+            renderer.domElement.addEventListener('mousedown', () => {
+                controls.autoRotate = false;
+            });
+
+            renderer.domElement.addEventListener('mouseup', () => {
+                // Resume auto-rotation after a short delay to allow damping to finish
+                setTimeout(() => {
+                    controls.autoRotate = true;
+                }, 500);
+            });
+
+            // Generate and add stars and connections
+            const starData = generateStarData(numStars);
+            addStars(starData);
+            addConnections(starData);
+
+            // Handle window resizing
+            window.addEventListener('resize', onWindowResize, false);
+        }
+
+        // Function to generate random star data with spherical distribution
+        function generateStarData(num) {
+            const data = [];
+
+            for (let i = 0; i < num; i++) {
+                // Generate random coordinates within a sphere
+                // Using a common method for uniform distribution within a sphere
+                const u = Math.random() * 2 - 1; // -1 to 1
+                const theta = Math.random() * Math.PI * 2; // 0 to 2PI
+                const r_scaled = Math.pow(Math.random(), 1/3) * maxSphereRadius; // Bias towards outer shell for more "surface" appearance
+
+                const x = r_scaled * Math.sqrt(1 - u * u) * Math.cos(theta);
+                const y = r_scaled * Math.sqrt(1 - u * u) * Math.sin(theta);
+                const z = r_scaled * u;
+
+                // Generate temperature and luminosity randomly on a logarithmic scale
+                const tempLog = Math.random() * (maxTempLog - minTempLog) + minTempLog;
+                const lumLog = Math.random() * (maxLumLog - minLumLog) + minLumLog;
+
+                const temperature = Math.pow(10, tempLog);
+                const luminosity = Math.pow(10, lumLog);
+
+                // Get base color from the temperature scale
+                let baseColor = new THREE.Color(colorScale(tempLog));
+
+                // Convert to HSL to randomize
+                let hsl = {};
+                baseColor.getHSL(hsl);
+
+                // Add small random offsets to HSL components for more color variation
+                hsl.h = (hsl.h + (Math.random() - 0.5) * 0.1) % 1; // Hue offset
+                hsl.s = Math.max(0, Math.min(1, hsl.s + (Math.random() - 0.5) * 0.2)); // Saturation offset
+                hsl.l = Math.max(0, Math.min(1, hsl.l + (Math.random() - 0.5) * 0.1)); // Lightness offset
+
+                let finalColor = new THREE.Color();
+                finalColor.setHSL(hsl.h, hsl.s, hsl.l);
+
+                data.push({
+                    x: x,
+                    y: y,
+                    z: z,
+                    color: finalColor,
+                    temperature: temperature, // Store original values for display
+                    luminosity: luminosity
+                });
+            }
+            return data;
+        }
+
+        // Function to add stars and their text labels to the scene
+        function addStars(starData) {
+            const positions = new Float32Array(numStars * 3);
+            const colors = new Float32Array(numStars * 3);
+
+            for (let i = 0; i < numStars; i++) {
+                const i3 = i * 3;
+                positions[i3] = starData[i].x;
+                positions[i3 + 1] = starData[i].y;
+                positions[i3 + 2] = starData[i].z;
+
+                starData[i].color.toArray(colors, i3);
+
+                // Generate initial random number between 100 and 999
+                const initialNumber = Math.floor(Math.random() * (999 - 100 + 1)) + 100; // New range: 100 to 999
+                const textSprite = makeTextSprite(
+                    initialNumber.toString(),
+                    {
+                        fontsize: 18, // Font size 20% larger
+                        textColor: { r: 255, g: 255, b: 255, a: 0.6 }
+                    }
+                );
+                // Position the sprite slightly next to the point
+                textSprite.position.set(starData[i].x + 8, starData[i].y, starData[i].z);
+                scene.add(textSprite);
+                starTextSprites.push(textSprite); // Store the sprite for later updates
+            }
+
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            const material = new THREE.PointsMaterial({
+                size: 5, // Size of the points
+                vertexColors: true, // Use vertex-defined colors
+                transparent: true,
+                opacity: 0.8,
+                sizeAttenuation: true // Points get smaller when further away
+            });
+
+            const points = new THREE.Points(geometry, material);
+            scene.add(points);
+        }
+
+        // Function to update the text sprites with new random numbers
+        function updateStarTexts() {
+            starTextSprites.forEach(sprite => {
+                const newNumber = Math.floor(Math.random() * (999 - 100 + 1)) + 100; // New range: 100 to 999
+                const canvas = sprite.material.map.image;
+                const context = canvas.getContext('2d');
+                const fontface = "Arial";
+                const fontsize = 18; // Consistent font size
+                const textColor = { r: 255, g: 255, b: 255, a: 0.6 };
+
+                // Clear the canvas before redrawing
+                context.clearRect(0, 0, canvas.width, canvas.height);
+
+                // Redraw the new text
+                context.font = "Bold " + fontsize + "px " + fontface;
+                context.fillStyle = "rgba(" + textColor.r + ", " + textColor.g + ", " + textColor.b + ", " + textColor.a + ")";
+                context.fillText(newNumber.toString(), 2, fontsize + 2);
+
+                // Mark texture for update
+                sprite.material.map.needsUpdate = true;
+            });
+        }
+
+        // Function to add connections (lines) between some stars
+        function addConnections(starData) {
+            const linePositions = [];
+            const lineColors = [];
+            const connectionDensity = 0.005; // Adjust this value to change how many connections are drawn (e.g., 0.01 for 1% of possible connections)
+            const lineColor = new THREE.Color(0x888888); // Light grey for lines
+            const lineOpacity = 0.2; // Transparent lines (reduced to 20%)
+
+            // Iterate through each star and connect it to a few random other stars
+            for (let i = 0; i < numStars; i++) {
+                // Connect each star to a small random number of other stars (e.g., 1 to 3)
+                const numConnections = Math.floor(Math.random() * 3) + 1;
+
+                for (let j = 0; j < numConnections; j++) {
+                    const targetIndex = Math.floor(Math.random() * numStars);
+                    // Avoid connecting a star to itself
+                    if (i === targetIndex) continue;
+
+                    // Add start point
+                    linePositions.push(starData[i].x, starData[i].y, starData[i].z);
+                    lineColor.toArray(lineColors, lineColors.length);
+
+                    // Add end point
+                    linePositions.push(starData[targetIndex].x, starData[targetIndex].y, starData[targetIndex].z);
+                    lineColor.toArray(lineColors, lineColors.length);
+                }
+            }
+
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(linePositions, 3));
+            geometry.setAttribute('color', new THREE.Float32BufferAttribute(lineColors, 3));
+
+            const material = new THREE.LineBasicMaterial({
+                vertexColors: true,
+                transparent: true,
+                opacity: lineOpacity,
+                blending: THREE.AdditiveBlending // Optional: makes lines glow a bit when overlapping
+            });
+
+            const lines = new THREE.LineSegments(geometry, material);
+            scene.add(lines);
+        }
+
+
+        // Function to handle window resizing
+        function onWindowResize() {
+            // Camera aspect ratio and renderer size now uses full window dimensions
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update(); // Updates orbit controls (handles auto-rotation and damping)
+            renderer.render(scene, camera); // Renders the scene
+        }
+
+        // Start the application when the window is fully loaded
+        window.onload = function () {
+            init();
+            animate();
+            // Update numbers 2 times per second (every 500 milliseconds)
+            setInterval(updateStarTexts, 500);
+        };
+
+    </script>
+</body>
+</html>
