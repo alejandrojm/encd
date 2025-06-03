@@ -36,7 +36,7 @@
             right: 0; /* Alineado a la derecha */
             top: 50%; /* Centrado verticalmente */
             transform: translateY(-50%); /* Ajuste para centrado vertical perfecto */
-            width: 1000px; /* Fixed width to prevent scaling with browser zoom */
+            width: 500px; /* Fixed width to prevent scaling with browser zoom */
             max-width: 90%; /* Ensures it's still responsive on very small screens */
             background-color: transparent; /* Fondo transparente para que se vea el canvas detrás */
             z-index: 1; /* Capa superior para la imagen */
@@ -105,8 +105,8 @@
             const context = canvas.getContext('2d');
             context.font = "Bold " + fontsize + "px " + fontface;
 
-            // Calculate max width for "999" to ensure consistent canvas size for 3-digit numbers
-            const tempMetrics = context.measureText("999"); // Changed to "999" for new range
+            // Calculate max width for "9999" to ensure consistent canvas size for 4-digit numbers
+            const tempMetrics = context.measureText("9999"); // Changed to "9999" for new range
             const maxTextWidth = tempMetrics.width;
             const textHeight = fontsize * 1.2; // Approximate height with some padding
 
@@ -245,10 +245,21 @@
 
                 starData[i].color.toArray(colors, i3);
 
-                // Generate initial random number between 100 and 999
-                const initialNumber = Math.floor(Math.random() * (999 - 100 + 1)) + 100; // New range: 100 to 999
+                // Calculate the distance from the center (0,0,0)
+                const distance = Math.sqrt(
+                    starData[i].x * starData[i].x +
+                    starData[i].y * starData[i].y +
+                    starData[i].z * starData[i].z
+                );
+
+                // Scale the distance to be between 1000 and 9999
+                // Normalize distance to a 0-1 range based on maxSphereRadius
+                const normalizedDistance = distance / maxSphereRadius;
+                // Map the normalized distance to the new range [1000, 9999]
+                const scaledDistance = Math.floor(normalizedDistance * (9999 - 1000 + 1)) + 1000;
+
                 const textSprite = makeTextSprite(
-                    initialNumber.toString(),
+                    scaledDistance.toString(), // Use the scaled distance
                     {
                         fontsize: 18, // Font size 20% larger
                         textColor: { r: 255, g: 255, b: 255, a: 0.6 }
@@ -276,28 +287,23 @@
             scene.add(points);
         }
 
-        // Function to update the text sprites with new random numbers
-        function updateStarTexts() {
-            starTextSprites.forEach(sprite => {
-                const newNumber = Math.floor(Math.random() * (999 - 100 + 1)) + 100; // New range: 100 to 999
-                const canvas = sprite.material.map.image;
-                const context = canvas.getContext('2d');
-                const fontface = "Arial";
-                const fontsize = 18; // Consistent font size
-                const textColor = { r: 255, g: 255, b: 255, a: 0.6 };
+        // The updateStarTexts function is no longer needed as numbers are static
+        // function updateStarTexts() {
+        //     starTextSprites.forEach(sprite => {
+        //         const newNumber = Math.floor(Math.random() * (999 - 100 + 1)) + 100;
+        //         const canvas = sprite.material.map.image;
+        //         const context = canvas.getContext('2d');
+        //         const fontface = "Arial";
+        //         const fontsize = 18;
+        //         const textColor = { r: 255, g: 255, b: 255, a: 0.6 };
 
-                // Clear the canvas before redrawing
-                context.clearRect(0, 0, canvas.width, canvas.height);
-
-                // Redraw the new text
-                context.font = "Bold " + fontsize + "px " + fontface;
-                context.fillStyle = "rgba(" + textColor.r + ", " + textColor.g + ", " + textColor.b + ", " + textColor.a + ")";
-                context.fillText(newNumber.toString(), 2, fontsize + 2);
-
-                // Mark texture for update
-                sprite.material.map.needsUpdate = true;
-            });
-        }
+        //         context.clearRect(0, 0, canvas.width, canvas.height);
+        //         context.font = "Bold " + fontsize + "px " + fontface;
+        //         context.fillStyle = "rgba(" + textColor.r + ", " + textColor.g + ", " + textColor.b + ", " + textColor.a + ")";
+        //         context.fillText(newNumber.toString(), 2, fontsize + 2);
+        //         sprite.material.map.needsUpdate = true;
+        //     });
+        // }
 
         // Function to add connections (lines) between some stars
         function addConnections(starData) {
@@ -345,7 +351,7 @@
 
         // Function to handle window resizing
         function onWindowResize() {
-            // Camera aspect ratio and renderer size now uses full window dimensions
+            // Camera aspect ratio and renderer size now use full window dimensions
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
@@ -362,8 +368,7 @@
         window.onload = function () {
             init();
             animate();
-            // Update numbers 2 times per second (every 500 milliseconds)
-            setInterval(updateStarTexts, 500);
+            // Removed setInterval as numbers are now static
         };
 
     </script>
